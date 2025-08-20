@@ -1,0 +1,23 @@
+{
+  "name": "gcal-oneway-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/oneway.ts",
+    "auth:source": "tsx src/auth.ts source",
+    "auth:target": "tsx src/auth.ts target",
+    "sync": "node dist/oneway.js",
+    "build": "tsc -p ."
+  },
+  "dependencies": {
+    "dayjs": "^1.11.11",
+    "googleapis": "^131.0.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.10"
+  }
+}
+
