@@ -2,8 +2,6 @@
 import "dotenv/config";
 import http from "http";
 import { google } from "googleapis";
-import fs from "fs/promises";
-import path from "path";
 const who = process.argv[2];
 if (!who) {
     console.error('Usage: tsx src/auth.ts <source|target>');
@@ -23,11 +21,6 @@ const url = oauth2.generateAuthUrl({
     prompt: "consent",
     scope: scopes
 });
-async function saveTokens(tokens) {
-    const file = path.join(process.cwd(), `tokens-${who}.json`);
-    await fs.writeFile(file, JSON.stringify(tokens, null, 2));
-    console.log(`Saved tokens to ${file}`);
-}
 const server = http.createServer(async (req, res) => {
     if (!req.url)
         return;
@@ -45,9 +38,12 @@ const server = http.createServer(async (req, res) => {
     }
     try {
         const { tokens } = await oauth2.getToken(code);
-        await saveTokens(tokens);
+        // Print the JSON blob so you can paste it into Railway
+        console.log(`\n\n=== COPY THIS INTO RAILWAY AS ${who.toUpperCase()}_TOKENS_JSON ===\n`);
+        console.log(JSON.stringify(tokens, null, 2));
+        console.log("\n==============================================================\n");
         res.writeHead(200);
-        res.end(`Authorized ${who}. You can close this tab.`);
+        res.end(`Authorized ${who}. Check your terminal for the JSON blob to paste into Railway.`);
     }
     catch (e) {
         console.error(e);
