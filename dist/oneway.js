@@ -141,7 +141,7 @@ async function syncOneSource(sourceCalId, source, target, targetId, state) {
                         requestBody: body,
                         sendUpdates: "none"
                     });
-                    console.log(`  + created mirror for ${key} -> ${created.id}`);
+                    console.log(`  + created mirror for "${ev.summary ?? '(busy)'}" (${key}) -> ${created.id}`);
                 }
                 else {
                     await target.events.patch({
@@ -150,7 +150,7 @@ async function syncOneSource(sourceCalId, source, target, targetId, state) {
                         requestBody: body,
                         sendUpdates: "none"
                     });
-                    console.log(`  ~ updated mirror for ${key} -> ${mirror.id}`);
+                    console.log(`  ~ updated mirror for "${ev.summary ?? '(busy)'}" (${key}) -> ${mirror.id}`);
                 }
             }
             pageToken = data.nextPageToken || undefined;
