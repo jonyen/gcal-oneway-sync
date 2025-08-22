@@ -2,8 +2,6 @@
 import "dotenv/config";
 import http from "http";
 import { google } from "googleapis";
-import fs from "fs/promises";
-import path from "path";
 
 const who = process.argv[2] as "source" | "target";
 if (!who) {
@@ -28,28 +26,36 @@ const url = oauth2.generateAuthUrl({
   scope: scopes
 });
 
-async function saveTokens(tokens: any) {
-  const file = path.join(process.cwd(), `tokens-${who}.json`);
-  await fs.writeFile(file, JSON.stringify(tokens, null, 2));
-  console.log(`Saved tokens to ${file}`);
-}
-
 const server = http.createServer(async (req, res) => {
   if (!req.url) return;
   const u = new URL(req.url, REDIRECT_URI);
   if (u.pathname !== "/oauth/callback") {
-    res.writeHead(200); res.end("Auth server ready");
+    res.writeHead(200);
+    res.end("Auth server ready");
     return;
   }
+
   const code = u.searchParams.get("code");
-  if (!code) { res.writeHead(400); res.end("Missing code"); return; }
+  if (!code) {
+    res.writeHead(400);
+    res.end("Missing code");
+    return;
+  }
+
   try {
     const { tokens } = await oauth2.getToken(code);
-    await saveTokens(tokens);
-    res.writeHead(200); res.end(`Authorized ${who}. You can close this tab.`);
+
+    // Print the JSON blob so you can paste it into Railway
+    console.log(`\n\n=== COPY THIS INTO RAILWAY AS ${who.toUpperCase()}_TOKENS_JSON ===\n`);
+    console.log(JSON.stringify(tokens, null, 2));
+    console.log("\n==============================================================\n");
+
+    res.writeHead(200);
+    res.end(`Authorized ${who}. Check your terminal for the JSON blob to paste into Railway.`);
   } catch (e: any) {
     console.error(e);
-    res.writeHead(500); res.end("Token exchange failed");
+    res.writeHead(500);
+    res.end("Token exchange failed");
   } finally {
     server.close();
   }
@@ -58,4 +64,3 @@ const server = http.createServer(async (req, res) => {
 server.listen(new URL(REDIRECT_URI).port, () => {
   console.log(`\nAuthorize the ${who} account:\n${url}\n`);
 });
-
