@@ -11,6 +11,13 @@ const __dirname = path.dirname(__filename);
 // project root = dist/.. when compiled
 const projectRoot = path.resolve(__dirname, "..");
 dotenv.config({ path: path.join(projectRoot, ".env") });
+const args = new Set(process.argv.slice(2));
+const RESET_ALL = args.has("--reset") || process.env.RESET === "1";
+const RESET_FOR = (process.env.RESET_FOR ?? ""); // optional comma-separated list of source IDs to reset
+const FULL_WINDOW_MONTHS = Number(process.env.FULL_WINDOW_MONTHS ?? 12);
+console.log("reset", RESET_ALL);
+console.log("reset_for", RESET_FOR);
+console.log("full_window_months", FULL_WINDOW_MONTHS);
 function loadTokensFromEnv(key) {
     const raw = process.env[key];
     if (!raw) {
@@ -100,8 +107,8 @@ async function syncOneSource(sourceCalId, source, target, targetId, state) {
         params.syncToken = stored;
     }
     else {
-        // first-time: pull ~12 months back
-        params.timeMin = dayjs().subtract(12, "month").toISOString();
+        // first-time (no syncToken): pull N months back
+        params.timeMin = dayjs().subtract(FULL_WINDOW_MONTHS, "month").toISOString();
     }
     let pageToken;
     do {
@@ -183,6 +190,14 @@ async function main() {
         process.exit(1);
     }
     const state = await loadJSON(STATE_FILE, { syncTokens: {} });
+    if (RESET_ALL) {
+        state.syncTokens = {};
+    }
+    else if (RESET_FOR) {
+        for (const id of RESET_FOR.split(",").map(s => s.trim()).filter(Boolean)) {
+            delete state.syncTokens[id];
+        }
+    }
     const sourceCal = calendarClient(sourceTokens);
     const targetCal = calendarClient(targetTokens);
     console.log(`One-way sync: [${SOURCE_IDS.join(", ")}]  →  ${TARGET_ID}`);

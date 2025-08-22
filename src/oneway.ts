@@ -14,6 +14,15 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 dotenv.config({ path: path.join(projectRoot, ".env") });
 
+const args = new Set(process.argv.slice(2));
+const RESET_ALL = args.has("--reset") || process.env.RESET === "1";
+const RESET_FOR = (process.env.RESET_FOR ?? ""); // optional comma-separated list of source IDs to reset
+const FULL_WINDOW_MONTHS = Number(process.env.FULL_WINDOW_MONTHS ?? 12);
+
+console.log("reset", RESET_ALL);
+console.log("reset_for", RESET_FOR);
+console.log("full_window_months", FULL_WINDOW_MONTHS);
+
 type Tokens = {
   access_token?: string;
   refresh_token?: string;
@@ -123,8 +132,8 @@ async function syncOneSource(sourceCalId: string, source: any, target: any, targ
   if (stored) {
     params.syncToken = stored;
   } else {
-    // first-time: pull ~12 months back
-    params.timeMin = dayjs().subtract(12, "month").toISOString();
+    // first-time (no syncToken): pull N months back
+    params.timeMin = dayjs().subtract(FULL_WINDOW_MONTHS, "month").toISOString();
   }
 
   let pageToken: string | undefined;
@@ -162,7 +171,7 @@ async function syncOneSource(sourceCalId: string, source: any, target: any, targ
             requestBody: body,
             sendUpdates: "none"
           });
-          console.log(`  + created mirror for ${key} -> ${created.id}`);
+          console.log(`  + created mirror for "${ev.summary ?? '(busy)'}" (${key}) -> ${created.id}`);
         } else {
           await target.events.patch({
             calendarId: targetId,
@@ -170,7 +179,7 @@ async function syncOneSource(sourceCalId: string, source: any, target: any, targ
             requestBody: body,
             sendUpdates: "none"
           });
-          console.log(`  ~ updated mirror for ${key} -> ${mirror.id}`);
+          console.log(`  ~ updated mirror for "${ev.summary ?? '(busy)'}" (${key}) -> ${mirror.id}`);
         }
       }
 
@@ -215,6 +224,14 @@ async function main() {
   }
 
   const state = await loadJSON<State>(STATE_FILE, { syncTokens: {} });
+
+  if (RESET_ALL) {
+    state.syncTokens = {};
+  } else if (RESET_FOR) {
+    for (const id of RESET_FOR.split(",").map(s => s.trim()).filter(Boolean)) {
+      delete state.syncTokens[id];
+    }
+  }
 
   const sourceCal = calendarClient(sourceTokens);
   const targetCal = calendarClient(targetTokens);
