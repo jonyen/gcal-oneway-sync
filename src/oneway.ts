@@ -27,6 +27,20 @@ type State = {
   syncTokens: Record<string, string | undefined>; // per source calendar
 };
 
+function loadTokensFromEnv(key: string): Tokens {
+  const raw = process.env[key];
+  if (!raw) {
+    console.error(`Missing env var: ${key}`);
+    return {};
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`Failed to parse ${key}:`, e);
+    return {};
+  }
+}
+
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
 const REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || "http://localhost:3333/oauth/callback";
@@ -39,8 +53,6 @@ const SOURCE_IDS = (process.env.SOURCE_CALENDAR_IDS || "")
 const TARGET_ID = process.env.TARGET_CALENDAR_ID || "primary";
 
 // files
-const TOKENS_SOURCE = path.join(process.cwd(), "tokens-source.json");
-const TOKENS_TARGET = path.join(process.cwd(), "tokens-target.json");
 const STATE_FILE = path.join(process.cwd(), "state.json");
 
 // origin tag
@@ -191,8 +203,9 @@ async function main() {
     process.exit(1);
   }
 
-  const sourceTokens = await loadJSON<Tokens>(TOKENS_SOURCE, {} as Tokens);
-  const targetTokens = await loadJSON<Tokens>(TOKENS_TARGET, {} as Tokens);
+  const sourceTokens = loadTokensFromEnv("SOURCE_TOKENS_JSON");
+  const targetTokens = loadTokensFromEnv("TARGET_TOKENS_JSON");
+
   if (!sourceTokens.refresh_token || !targetTokens.refresh_token) {
     console.error("Run auth first: npm run auth:source && npm run auth:target");
     process.exit(1);
