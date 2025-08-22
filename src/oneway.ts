@@ -206,6 +206,9 @@ async function main() {
   const sourceTokens = loadTokensFromEnv("SOURCE_TOKENS_JSON");
   const targetTokens = loadTokensFromEnv("TARGET_TOKENS_JSON");
 
+  console.log(sourceTokens);
+  console.log(targetTokens);
+
   if (!sourceTokens.refresh_token || !targetTokens.refresh_token) {
     console.error("Run auth first: npm run auth:source && npm run auth:target");
     process.exit(1);
