@@ -8,7 +8,8 @@
     "auth:target": "tsx src/auth.ts target",
     "sync": "node dist/onewaySync.js",
     "build": "tsc -p .",
-    "cleanup": "tsx src/cleanupTarget.ts"
+    "cleanup": "tsx src/cleanupTarget.ts",
+    "dedupe": "tsx src/dedupeTarget.ts"
   },
   "dependencies": {
     "dayjs": "^1.11.11",
