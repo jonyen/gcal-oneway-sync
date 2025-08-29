@@ -6,7 +6,7 @@
     "dev": "tsx src/oneway.ts",
     "auth:source": "tsx src/auth.ts source",
     "auth:target": "tsx src/auth.ts target",
-    "sync": "node dist/oneway.js",
+    "sync": "node dist/onewaySync.js",
     "build": "tsc -p .",
     "cleanup": "tsx src/cleanupTarget.ts"
   },
