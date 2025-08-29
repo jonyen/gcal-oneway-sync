@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/oneway.ts",
+    "dev": "tsx src/onewaySync.ts",
     "auth:source": "tsx src/auth.ts source",
     "auth:target": "tsx src/auth.ts target",
     "sync": "node dist/onewaySync.js",

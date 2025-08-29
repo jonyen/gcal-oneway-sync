@@ -117,7 +117,7 @@ async function findByICalAndBackfill(targetApi: any, targetId: string, ev: any, 
   // Prefer exact instance match when recurring exception
   const orig = isoOrDate(ev.originalStartTime?.dateTime, ev.originalStartTime?.date);
   const winner = orig
-    ? items.find(c => isoOrDate(c.originalStartTime?.dateTime, c.originalStartTime?.date) === orig) || items[0]
+    ? items.find((c: any) => isoOrDate(c.originalStartTime?.dateTime, c.originalStartTime?.date) === orig) || items[0]
     : items[0];
 
   // Backfill our origin tag so future runs hit fast path
