@@ -38,17 +38,30 @@ jobs:
         gcloud services enable cloudbuild.googleapis.com --project=${{ env.PROJECT_ID }}
         gcloud services enable run.googleapis.com --project=${{ env.PROJECT_ID }}
         gcloud services enable artifactregistry.googleapis.com --project=${{ env.PROJECT_ID }}
+        gcloud services enable secretmanager.googleapis.com --project=${{ env.PROJECT_ID }}
 
     - name: Create Artifact Registry repository
       run: |
-        gcloud artifacts repositories create ${{ env.SERVICE_NAME }} \
-          --repository-format=docker \
-          --location=${{ env.REGION }} \
-          --project=${{ env.PROJECT_ID }} || true
+        # Check if repository exists first
+        if ! gcloud artifacts repositories describe ${{ env.SERVICE_NAME }} --location=${{ env.REGION }} --project=${{ env.PROJECT_ID }} 2>/dev/null; then
+          echo "Creating Artifact Registry repository..."
+          gcloud artifacts repositories create ${{ env.SERVICE_NAME }} \
+            --repository-format=docker \
+            --location=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }}
+        else
+          echo "Artifact Registry repository already exists"
+        fi
 
     - name: Grant Secret Manager permissions
       run: |
-        PROJECT_NUMBER=$(gcloud projects describe ${{ env.PROJECT_ID }} --format="value(projectNumber)")
+        # Get project number using a different approach
+        PROJECT_NUMBER=$(gcloud projects list --filter="projectId:${{ env.PROJECT_ID }}" --format="value(projectNumber)")
+        if [ -z "$PROJECT_NUMBER" ]; then
+          echo "Could not get project number, trying alternative method..."
+          PROJECT_NUMBER=$(gcloud config get-value project | xargs gcloud projects describe --format="value(projectNumber)")
+        fi
+        echo "Project number: $PROJECT_NUMBER"
         gcloud projects add-iam-policy-binding ${{ env.PROJECT_ID }} \
           --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
           --role="roles/secretmanager.secretAccessor"
