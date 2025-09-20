@@ -53,18 +53,6 @@ jobs:
           echo "Artifact Registry repository already exists"
         fi
 
-    - name: Grant Secret Manager permissions
-      run: |
-        # Get project number using a different approach
-        PROJECT_NUMBER=$(gcloud projects list --filter="projectId:${{ env.PROJECT_ID }}" --format="value(projectNumber)")
-        if [ -z "$PROJECT_NUMBER" ]; then
-          echo "Could not get project number, trying alternative method..."
-          PROJECT_NUMBER=$(gcloud config get-value project | xargs gcloud projects describe --format="value(projectNumber)")
-        fi
-        echo "Project number: $PROJECT_NUMBER"
-        gcloud projects add-iam-policy-binding ${{ env.PROJECT_ID }} \
-          --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
-          --role="roles/secretmanager.secretAccessor"
 
     - name: Build and push container
       run: |
