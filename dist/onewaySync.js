@@ -60,7 +60,7 @@ async function saveState(state) {
         console.warn("[state] write failed:", e?.message);
     }
 }
-// --- google helpers
+// --- google helpers with rate limiting
 function oauth(tokens) {
     const o = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
     o.setCredentials(tokens);
@@ -68,6 +68,10 @@ function oauth(tokens) {
 }
 function calendar(tokens) {
     return google.calendar({ version: "v3", auth: oauth(tokens) });
+}
+// Rate limiting helper
+async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 // --- dedupe-safe keying
 const ORIGIN_KEY = "origin";
@@ -159,8 +163,13 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
             const { data } = await sourceApi.events.list({ ...baseParams, pageToken });
             const items = data.items ?? [];
             console.log(`[fetch] ${sourceId} -> ${targetId} items=${items.length} ${token ? "(inc)" : "(full)"}`);
-            for (const ev of items) {
+            for (let i = 0; i < items.length; i++) {
+                const ev = items[i];
                 const key = buildOriginKey(sourceId, ev);
+                // Add small delay every 10 events to avoid quota issues
+                if (i > 0 && i % 10 === 0) {
+                    await sleep(100);
+                }
                 if (ev.status === "cancelled") {
                     // delete mirrored event if it exists
                     const mirror = await (findByOrigin(targetApi, targetId, key) || findByICalAndBackfill(targetApi, targetId, ev, key));
@@ -179,18 +188,37 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                     }
                     continue;
                 }
-                // Upsert in target
+                // Upsert in target with retry logic for duplicate prevention
                 let mirror = await findByOrigin(targetApi, targetId, key);
                 if (!mirror)
                     mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
                 const body = mirrorBodyFrom(ev, key);
                 if (!mirror) {
-                    const { data: created } = await targetApi.events.insert({
-                        calendarId: targetId,
-                        requestBody: body,
-                        sendUpdates: "none"
-                    });
-                    console.log(`  + created ${created.id} for ${key}`);
+                    try {
+                        const { data: created } = await targetApi.events.insert({
+                            calendarId: targetId,
+                            requestBody: body,
+                            sendUpdates: "none"
+                        });
+                        console.log(`  + created ${created.id} for ${key}`);
+                    }
+                    catch (insertError) {
+                        // If insert fails, check if event was created by another process
+                        console.warn(`  ! insert failed for ${key}, checking for race condition: ${insertError?.message}`);
+                        mirror = await findByOrigin(targetApi, targetId, key);
+                        if (mirror) {
+                            await targetApi.events.patch({
+                                calendarId: targetId,
+                                eventId: mirror.id,
+                                requestBody: body,
+                                sendUpdates: "none"
+                            });
+                            console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved)`);
+                        }
+                        else {
+                            throw insertError;
+                        }
+                    }
                 }
                 else {
                     await targetApi.events.patch({

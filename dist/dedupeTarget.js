@@ -46,7 +46,11 @@ async function dedupe() {
         const keep = sorted[0];
         kept++;
         const dupes = sorted.slice(1);
-        for (const d of dupes) {
+        for (let i = 0; i < dupes.length; i++) {
+            const d = dupes[i];
+            // Add delay to respect quota limits
+            if (i > 0)
+                await new Promise(resolve => setTimeout(resolve, 200));
             if (DRY_RUN) {
                 console.log(`[DRY RUN] Would delete duplicate ${d.id} for origin ${origin}`);
             }
@@ -61,7 +65,26 @@ async function dedupe() {
                     console.log(`Deleted duplicate ${d.id} for origin ${origin}`);
                 }
                 catch (e) {
-                    console.warn(`Failed to delete ${d.id}: ${e.message}`);
+                    const message = e.message || e.toString();
+                    if (message.includes('Quota exceeded')) {
+                        console.warn(`Quota exceeded, waiting 60s before retrying...`);
+                        await new Promise(resolve => setTimeout(resolve, 60000));
+                        try {
+                            await calendar.events.delete({
+                                calendarId: TARGET_CALENDAR_ID,
+                                eventId: d.id,
+                                sendUpdates: "none"
+                            });
+                            deleted++;
+                            console.log(`Deleted duplicate ${d.id} for origin ${origin} (after retry)`);
+                        }
+                        catch (retryError) {
+                            console.warn(`Failed to delete ${d.id} after retry: ${retryError.message}`);
+                        }
+                    }
+                    else {
+                        console.warn(`Failed to delete ${d.id}: ${message}`);
+                    }
                 }
             }
         }
