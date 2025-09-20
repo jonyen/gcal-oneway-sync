@@ -134,7 +134,7 @@ function mirrorBodyFrom(ev, key) {
         location: ev.location,
         start: ev.start,
         end: ev.end,
-        reminders: ev.reminders,
+        // Skip reminders to avoid conflicts - let target calendar use defaults
         visibility: ev.visibility,
         recurrence: ev.recurrence, // keep series when present
         attendees: undefined, // avoid invites from target
