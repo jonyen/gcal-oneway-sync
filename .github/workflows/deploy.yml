@@ -1,0 +1,76 @@
+name: Deploy to GCP Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: gcal-sync-472716
+  SERVICE_NAME: gcal-oneway-sync
+  REGION: us-central1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Configure Docker auth
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+    - name: Enable required APIs
+      run: |
+        gcloud services enable cloudbuild.googleapis.com --project=${{ env.PROJECT_ID }}
+        gcloud services enable run.googleapis.com --project=${{ env.PROJECT_ID }}
+        gcloud services enable artifactregistry.googleapis.com --project=${{ env.PROJECT_ID }}
+
+    - name: Create Artifact Registry repository
+      run: |
+        gcloud artifacts repositories create ${{ env.SERVICE_NAME }} \
+          --repository-format=docker \
+          --location=${{ env.REGION }} \
+          --project=${{ env.PROJECT_ID }} || true
+
+    - name: Grant Secret Manager permissions
+      run: |
+        PROJECT_NUMBER=$(gcloud projects describe ${{ env.PROJECT_ID }} --format="value(projectNumber)")
+        gcloud projects add-iam-policy-binding ${{ env.PROJECT_ID }} \
+          --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+          --role="roles/secretmanager.secretAccessor"
+
+    - name: Build and push container
+      run: |
+        gcloud builds submit --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --allow-unauthenticated \
+          --set-env-vars NODE_ENV=production \
+          --set-secrets GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,SOURCE_TOKENS_JSON=source-tokens-json:latest,TARGET_TOKENS_JSON=target-tokens-json:latest,SOURCE_CALENDAR_IDS=source-calendar-ids:latest \
+          --set-env-vars TARGET_CALENDAR_ID=45885219398c1d3970c6fb97a81b763c5e8efd8d2592c1489ef484d79b6ab2b5@group.calendar.google.com,FULL_WINDOW_MONTHS=12,STATE_FILE=/app/state.json \
+          --max-instances 1 \
+          --memory 512Mi \
+          --cpu 1
+
+    - name: Get service URL
+      run: |
+        echo "Service URL: $(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)')"
