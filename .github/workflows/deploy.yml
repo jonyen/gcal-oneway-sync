@@ -56,7 +56,8 @@ jobs:
 
     - name: Build and push container
       run: |
-        gcloud builds submit --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest
+        gcloud builds submit --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest \
+          --service-account=github-actions@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
 
     - name: Deploy to Cloud Run
       run: |
