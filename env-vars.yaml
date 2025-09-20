@@ -1,0 +1,13 @@
+# Environment variables for GCP deployment
+# Copy this file to env-vars.yaml and fill in your actual values
+# DO NOT commit this file with real values!
+
+GOOGLE_CLIENT_ID: "your-client-id.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET: "your-client-secret"
+OAUTH_REDIRECT_URI: "https://your-service-url.run.app/oauth/callback"
+SOURCE_CALENDAR_IDS: "team@group.calendar.google.com,calendar2@group.calendar.google.com"
+TARGET_CALENDAR_ID: "primary"
+FULL_WINDOW_MONTHS: "12"
+STATE_FILE: "/app/state.json"
+SOURCE_TOKENS_JSON: '{"access_token":"...","refresh_token":"...","expiry_date":...}'
+TARGET_TOKENS_JSON: '{"access_token":"...","refresh_token":"...","expiry_date":...}'

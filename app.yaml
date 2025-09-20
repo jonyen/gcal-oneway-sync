@@ -1,0 +1,13 @@
+runtime: nodejs18
+
+# App Engine alternative configuration
+# Use this if you prefer App Engine over Cloud Run
+
+automatic_scaling:
+  min_instances: 0
+  max_instances: 1
+
+env_variables:
+  NODE_ENV: production
+
+# Environment variables will be set via Secret Manager or gcloud app deploy --env-vars-file
