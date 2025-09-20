@@ -56,8 +56,10 @@ jobs:
 
     - name: Build and push container
       run: |
-        gcloud builds submit --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest \
-          --suppress-logs
+        BUILD_ID=$(gcloud builds submit --tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:latest --async --format="value(id)")
+        echo "Build ID: $BUILD_ID"
+        echo "Waiting for build to complete..."
+        gcloud builds wait $BUILD_ID --timeout=600
 
     - name: Deploy to Cloud Run
       run: |
