@@ -22,7 +22,7 @@ const SOURCE_IDS = (process.env.SOURCE_CALENDAR_IDS || "")
 
 const TARGET_ID = process.env.TARGET_CALENDAR_ID || "primary";
 
-const FULL_WINDOW_MONTHS = Number(process.env.FULL_WINDOW_MONTHS ?? 12);
+// Removed FULL_WINDOW_MONTHS - now syncing only upcoming 2 weeks
 const STATE_FILE = process.env.STATE_FILE || path.join(projectRoot, "state.json");
 const STATE_DISABLE = process.env.STATE_DISABLE === "1";
 const LOCK_FILE = path.join(projectRoot, "sync.lock");
@@ -54,7 +54,7 @@ async function loadState(): Promise<State> {
     const parsed = JSON.parse(txt);
     return { syncTokens: parsed.syncTokens ?? {} };
   } catch {
-    console.log(`[state] no state at ${STATE_FILE}; will full-sync ${FULL_WINDOW_MONTHS}m`);
+    console.log(`[state] no state at ${STATE_FILE}; will sync upcoming 2 weeks`);
     return { syncTokens: {} };
   }
 }
@@ -131,9 +131,15 @@ async function resolveCanonicalId(sourceApi: any, id: string): Promise<string> {
   return data.id || id;
 }
 
+// Normalize iCalUID by removing @google.com suffix for consistent deduplication
+function normalizeICalUID(iCalUID: string): string {
+  return iCalUID ? iCalUID.replace(/@google\.com$/, '') : iCalUID;
+}
+
 // Use iCalUID (stable across calendars) + originalStart for recurring exceptions
 function buildOriginKey(srcCanonicalId: string, ev: any): string {
-  const base = `${srcCanonicalId}:${ev.iCalUID ?? ev.id}`;
+  const normalizedUID = normalizeICalUID(ev.iCalUID ?? ev.id);
+  const base = `${srcCanonicalId}:${normalizedUID}`;
   const orig = isoOrDate(ev.originalStartTime?.dateTime, ev.originalStartTime?.date);
   return orig ? `${base}:${orig}` : base;
 }
@@ -222,8 +228,13 @@ async function syncOneSource(
     maxResults: 2500
   };
   const token = state.syncTokens[sourceId];
-  if (token) baseParams.syncToken = token;
-  else baseParams.timeMin = dayjs().subtract(FULL_WINDOW_MONTHS, "month").toISOString();
+  if (token) {
+    baseParams.syncToken = token;
+  } else {
+    // Sync only upcoming 2 weeks
+    baseParams.timeMin = dayjs().toISOString();
+    baseParams.timeMax = dayjs().add(2, "week").toISOString();
+  }
 
   let pageToken: string | undefined;
 
@@ -336,11 +347,12 @@ async function syncOneSource(
     } catch (e: any) {
       const code = e?.code || e?.response?.status;
       if (code === 410) {
-        console.warn(`[${sourceId}] stale sync token → resetting to full window`);
+        console.warn(`[${sourceId}] stale sync token → resetting to 2-week window`);
         delete state.syncTokens[sourceId];
         await saveState(state);
         delete baseParams.syncToken;
-        baseParams.timeMin = dayjs().subtract(FULL_WINDOW_MONTHS, "month").toISOString();
+        baseParams.timeMin = dayjs().toISOString();
+        baseParams.timeMax = dayjs().add(2, "week").toISOString();
         pageToken = undefined;
         continue;
       }

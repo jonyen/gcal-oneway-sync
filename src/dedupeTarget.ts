@@ -21,6 +21,21 @@ function cal(tokens: any) {
   return google.calendar({ version: "v3", auth: oauth(tokens) });
 }
 
+function formatEventDate(event: any): string {
+  const start = event.start;
+  if (!start) return "(no date)";
+
+  const dateTime = start.dateTime || start.date;
+  if (!dateTime) return "(no date)";
+
+  try {
+    const date = new Date(dateTime);
+    return date.toLocaleDateString();
+  } catch {
+    return "(invalid date)";
+  }
+}
+
 async function dedupe() {
   const calendar = cal(TARGET_TOKENS);
 
@@ -62,6 +77,8 @@ async function dedupe() {
     kept++;
     const dupes = sorted.slice(1);
 
+    console.log(`Found ${dupes.length} duplicate(s) for "${keep.summary || '(no title)'}" (${formatEventDate(keep)}) - keeping oldest (${keep.id}), removing ${dupes.length} newer copies`);
+
     for (let i = 0; i < dupes.length; i++) {
       const d = dupes[i];
 
@@ -69,7 +86,7 @@ async function dedupe() {
       if (i > 0) await new Promise(resolve => setTimeout(resolve, 200));
 
       if (DRY_RUN) {
-        console.log(`[DRY RUN] Would delete duplicate ${d.id} for origin ${origin}`);
+        console.log(`[DRY RUN] Would delete duplicate "${d.summary || '(no title)'}" (${formatEventDate(d)}) (${d.id})`);
       } else {
         try {
           await calendar.events.delete({
@@ -78,7 +95,7 @@ async function dedupe() {
             sendUpdates: "none" as any
           });
           deleted++;
-          console.log(`Deleted duplicate ${d.id} for origin ${origin}`);
+          console.log(`Deleted duplicate "${d.summary || '(no title)'}" (${formatEventDate(d)}) (${d.id})`);
         } catch (e: any) {
           const message = e.message || e.toString();
           if (message.includes('Quota exceeded')) {
@@ -91,12 +108,12 @@ async function dedupe() {
                 sendUpdates: "none" as any
               });
               deleted++;
-              console.log(`Deleted duplicate ${d.id} for origin ${origin} (after retry)`);
+              console.log(`Deleted duplicate "${d.summary || '(no title)'}" (${formatEventDate(d)}) (${d.id}) after retry`);
             } catch (retryError: any) {
-              console.warn(`Failed to delete ${d.id} after retry: ${retryError.message}`);
+              console.warn(`Failed to delete "${d.summary || '(no title)'}" (${formatEventDate(d)}) (${d.id}) after retry: ${retryError.message}`);
             }
           } else {
-            console.warn(`Failed to delete ${d.id}: ${message}`);
+            console.warn(`Failed to delete "${d.summary || '(no title)'}" (${formatEventDate(d)}) (${d.id}): ${message}`);
           }
         }
       }
