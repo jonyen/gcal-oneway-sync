@@ -216,11 +216,10 @@ function mirrorBodyFrom(ev: any, key: string) {
 async function syncOneSource(
   sourceApi: any,
   targetApi: any,
-  rawSourceId: string,
+  sourceId: string,
   targetId: string,
   state: State
 ) {
-  const sourceId = await resolveCanonicalId(sourceApi, rawSourceId);
 
   const baseParams: any = {
     calendarId: sourceId,
@@ -263,7 +262,7 @@ async function syncOneSource(
                 eventId: mirror.id!,
                 sendUpdates: "none" as any
               });
-              console.log(`  - deleted mirror for ${key}`);
+              console.log(`  - deleted mirror for ${key} | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
             } catch (e: any) {
               console.warn(`  ! delete failed for ${key}: ${e?.message}`);
             }
@@ -287,7 +286,7 @@ async function syncOneSource(
                 requestBody: body,
                 sendUpdates: "none"
               });
-              console.log(`  + created ${created.id} for ${key}`);
+              console.log(`  + created ${created.id} for ${key} | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
             } catch (insertError: any) {
               // Enhanced race condition handling
               console.warn(`  ! insert failed for ${key}, checking for race condition: ${insertError?.message}`);
@@ -305,7 +304,7 @@ async function syncOneSource(
                     requestBody: body,
                     sendUpdates: "none"
                   });
-                  console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved)`);
+                  console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved) | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
                 } catch (patchError: any) {
                   console.warn(`  ! patch failed after race condition: ${patchError?.message}`);
                 }
@@ -326,7 +325,7 @@ async function syncOneSource(
               requestBody: body,
               sendUpdates: "none"
             });
-            console.log(`  ~ updated ${mirror.id} for ${key} (found during triple-check)`);
+            console.log(`  ~ updated ${mirror.id} for ${key} (found during triple-check) | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
           }
         } else {
           await targetApi.events.patch({
@@ -335,7 +334,7 @@ async function syncOneSource(
             requestBody: body,
             sendUpdates: "none"
           });
-          console.log(`  ~ updated ${mirror.id} for ${key}`);
+          console.log(`  ~ updated ${mirror.id} for ${key} | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
         }
       }
 
@@ -388,12 +387,23 @@ export async function main() {
       }
     }
 
+    // Resolve all source IDs to canonical form and deduplicate
+    const canonicalSourceIds = new Set<string>();
+    const sourceIdMapping: Record<string, string> = {};
+
+    for (const rawSrcId of SOURCE_IDS) {
+      const canonicalId = await resolveCanonicalId(src, rawSrcId);
+      canonicalSourceIds.add(canonicalId);
+      sourceIdMapping[rawSrcId] = canonicalId;
+    }
+
     console.log("---- Sync run", new Date().toISOString(), "----");
-    console.log("Sources:", SOURCE_IDS.join(", "));
+    console.log("Sources:", SOURCE_IDS.map(id => `${id} -> ${sourceIdMapping[id]}`).join(", "));
+    console.log("Canonical sources (deduplicated):", Array.from(canonicalSourceIds).join(", "));
     console.log("Target :", TARGET_ID);
 
-    for (const srcId of SOURCE_IDS) {
-      await syncOneSource(src, tgt, srcId, TARGET_ID, state);
+    for (const canonicalSrcId of canonicalSourceIds) {
+      await syncOneSource(src, tgt, canonicalSrcId, TARGET_ID, state);
     }
 
     console.log("Done.");
