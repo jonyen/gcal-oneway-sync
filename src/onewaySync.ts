@@ -25,6 +25,7 @@ const TARGET_ID = process.env.TARGET_CALENDAR_ID || "primary";
 const FULL_WINDOW_MONTHS = Number(process.env.FULL_WINDOW_MONTHS ?? 12);
 const STATE_FILE = process.env.STATE_FILE || path.join(projectRoot, "state.json");
 const STATE_DISABLE = process.env.STATE_DISABLE === "1";
+const LOCK_FILE = path.join(projectRoot, "sync.lock");
 
 // allow reset via CLI or env
 const args = new Set(process.argv.slice(2));
@@ -63,6 +64,48 @@ async function saveState(state: State) {
   catch (e: any) { console.warn("[state] write failed:", e?.message); }
 }
 
+// Lock management to prevent concurrent syncs
+async function acquireLock(): Promise<boolean> {
+  try {
+    await fs.writeFile(LOCK_FILE, process.pid.toString(), { flag: 'wx' });
+    return true;
+  } catch (e: any) {
+    if (e.code === 'EEXIST') {
+      try {
+        const pidStr = await fs.readFile(LOCK_FILE, 'utf8');
+        const pid = parseInt(pidStr.trim());
+
+        // Check if process is still running
+        try {
+          process.kill(pid, 0);
+          console.warn(`[lock] sync already running (PID ${pid})`);
+          return false;
+        } catch {
+          // Process doesn't exist, remove stale lock
+          console.log(`[lock] removing stale lock for PID ${pid}`);
+          await fs.unlink(LOCK_FILE);
+          return await acquireLock();
+        }
+      } catch {
+        // Can't read lock file, remove it
+        await fs.unlink(LOCK_FILE).catch(() => {});
+        return await acquireLock();
+      }
+    }
+    throw e;
+  }
+}
+
+async function releaseLock() {
+  try {
+    await fs.unlink(LOCK_FILE);
+  } catch (e: any) {
+    if (e.code !== 'ENOENT') {
+      console.warn("[lock] release failed:", e?.message);
+    }
+  }
+}
+
 // --- google helpers with rate limiting
 function oauth(tokens: Tokens) {
   const o = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
@@ -99,11 +142,21 @@ async function findByOrigin(targetApi: any, targetId: string, key: string) {
   const { data } = await targetApi.events.list({
     calendarId: targetId,
     privateExtendedProperty: `${ORIGIN_KEY}=${key}`,
-    maxResults: 2,
+    maxResults: 10,
     singleEvents: false,
     showDeleted: false
   });
-  return data.items?.[0] || null;
+  const items = data.items || [];
+
+  // If multiple items found, prefer the oldest (first created)
+  if (items.length > 1) {
+    console.warn(`  ! found ${items.length} events for origin ${key}, using oldest`);
+    return items.sort((a: any, b: any) =>
+      new Date(a.created!).getTime() - new Date(b.created!).getTime()
+    )[0];
+  }
+
+  return items[0] || null;
 }
 
 async function findByICalAndBackfill(targetApi: any, targetId: string, ev: any, key: string) {
@@ -207,35 +260,62 @@ async function syncOneSource(
           continue;
         }
 
-        // Upsert in target with retry logic for duplicate prevention
+        // Robust deduplication with multiple checks
         let mirror = await findByOrigin(targetApi, targetId, key);
         if (!mirror) mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
 
         const body = mirrorBodyFrom(ev, key);
 
         if (!mirror) {
-          try {
-            const { data: created } = await targetApi.events.insert({
-              calendarId: targetId,
-              requestBody: body,
-              sendUpdates: "none"
-            });
-            console.log(`  + created ${created.id} for ${key}`);
-          } catch (insertError: any) {
-            // If insert fails, check if event was created by another process
-            console.warn(`  ! insert failed for ${key}, checking for race condition: ${insertError?.message}`);
-            mirror = await findByOrigin(targetApi, targetId, key);
-            if (mirror) {
-              await targetApi.events.patch({
+          // Triple-check before creating to prevent duplicates
+          mirror = await findByOrigin(targetApi, targetId, key);
+          if (!mirror) {
+            try {
+              const { data: created } = await targetApi.events.insert({
                 calendarId: targetId,
-                eventId: mirror.id!,
                 requestBody: body,
                 sendUpdates: "none"
               });
-              console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved)`);
-            } else {
-              throw insertError;
+              console.log(`  + created ${created.id} for ${key}`);
+            } catch (insertError: any) {
+              // Enhanced race condition handling
+              console.warn(`  ! insert failed for ${key}, checking for race condition: ${insertError?.message}`);
+
+              // Wait a moment and check again more thoroughly
+              await sleep(200);
+              mirror = await findByOrigin(targetApi, targetId, key);
+              if (!mirror) mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
+
+              if (mirror) {
+                try {
+                  await targetApi.events.patch({
+                    calendarId: targetId,
+                    eventId: mirror.id!,
+                    requestBody: body,
+                    sendUpdates: "none"
+                  });
+                  console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved)`);
+                } catch (patchError: any) {
+                  console.warn(`  ! patch failed after race condition: ${patchError?.message}`);
+                }
+              } else {
+                // Last resort: check if the error was due to a duplicate iCalUID
+                if (insertError?.message?.includes('duplicate') || insertError?.message?.includes('already exists')) {
+                  console.warn(`  ! duplicate detected, event may already exist: ${key}`);
+                } else {
+                  throw insertError;
+                }
+              }
             }
+          } else {
+            // Found during triple-check, update instead
+            await targetApi.events.patch({
+              calendarId: targetId,
+              eventId: mirror.id!,
+              requestBody: body,
+              sendUpdates: "none"
+            });
+            console.log(`  ~ updated ${mirror.id} for ${key} (found during triple-check)`);
           }
         } else {
           await targetApi.events.patch({
@@ -276,27 +356,38 @@ export async function main() {
     process.exit(1);
   }
 
-  const src = calendar(SOURCE_TOKENS);
-  const tgt = calendar(TARGET_TOKENS);
+  // Acquire lock to prevent concurrent syncs
+  const lockAcquired = await acquireLock();
+  if (!lockAcquired) {
+    console.log("Sync already in progress, exiting.");
+    return;
+  }
 
-  const state = await loadState();
-  if (RESET_ALL) {
-    state.syncTokens = {};
-  } else if (RESET_FOR) {
-    for (const id of RESET_FOR.split(",").map(s => s.trim()).filter(Boolean)) {
-      delete state.syncTokens[id];
+  try {
+    const src = calendar(SOURCE_TOKENS);
+    const tgt = calendar(TARGET_TOKENS);
+
+    const state = await loadState();
+    if (RESET_ALL) {
+      state.syncTokens = {};
+    } else if (RESET_FOR) {
+      for (const id of RESET_FOR.split(",").map(s => s.trim()).filter(Boolean)) {
+        delete state.syncTokens[id];
+      }
     }
+
+    console.log("---- Sync run", new Date().toISOString(), "----");
+    console.log("Sources:", SOURCE_IDS.join(", "));
+    console.log("Target :", TARGET_ID);
+
+    for (const srcId of SOURCE_IDS) {
+      await syncOneSource(src, tgt, srcId, TARGET_ID, state);
+    }
+
+    console.log("Done.");
+  } finally {
+    await releaseLock();
   }
-
-  console.log("---- Sync run", new Date().toISOString(), "----");
-  console.log("Sources:", SOURCE_IDS.join(", "));
-  console.log("Target :", TARGET_ID);
-
-  for (const srcId of SOURCE_IDS) {
-    await syncOneSource(src, tgt, srcId, TARGET_ID, state);
-  }
-
-  console.log("Done.");
 }
 
 // Allow direct CLI execution
