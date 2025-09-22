@@ -144,6 +144,74 @@ function buildOriginKey(srcCanonicalId: string, ev: any): string {
   return orig ? `${base}:${orig}` : base;
 }
 
+// Create a normalized key for title + time duplicate detection
+function buildTitleTimeKey(ev: any): string {
+  const title = (ev.summary || "").trim().toLowerCase();
+  const startTime = isoOrDate(ev.start?.dateTime, ev.start?.date);
+  const endTime = isoOrDate(ev.end?.dateTime, ev.end?.date);
+  return `${title}:${startTime}:${endTime}`;
+}
+
+// Find events by title and time in target calendar
+async function findByTitleTime(targetApi: any, targetId: string, ev: any) {
+  const titleTimeKey = buildTitleTimeKey(ev);
+  const [title] = titleTimeKey.split(':');
+
+  if (!title || !ev.start) return [];
+
+  // Search for events with same title in a time window around the event
+  const searchStart = new Date(ev.start?.dateTime || ev.start?.date);
+  const searchEnd = new Date(searchStart);
+  searchEnd.setDate(searchEnd.getDate() + 1); // Search within same day
+
+  try {
+    const { data } = await targetApi.events.list({
+      calendarId: targetId,
+      timeMin: searchStart.toISOString(),
+      timeMax: searchEnd.toISOString(),
+      q: ev.summary,
+      maxResults: 50,
+      singleEvents: true,
+      showDeleted: false
+    });
+
+    const items = data.items || [];
+    return items.filter((item: any) => {
+      const itemKey = buildTitleTimeKey(item);
+      return itemKey === titleTimeKey;
+    });
+  } catch (e: any) {
+    console.warn("Title/time search failed:", e?.message);
+    return [];
+  }
+}
+
+// Compare two events to determine which is newer/has more details
+function isEventNewer(eventA: any, eventB: any): boolean {
+  const timeA = new Date(eventA.updated || eventA.created || 0).getTime();
+  const timeB = new Date(eventB.updated || eventB.created || 0).getTime();
+
+  if (timeA !== timeB) {
+    return timeA > timeB;
+  }
+
+  // If times are equal, prefer event with more details
+  const scoreA = getEventDetailScore(eventA);
+  const scoreB = getEventDetailScore(eventB);
+  return scoreA > scoreB;
+}
+
+// Score an event based on amount of detail it contains
+function getEventDetailScore(ev: any): number {
+  let score = 0;
+  if (ev.description?.trim()) score += 2;
+  if (ev.location?.trim()) score += 1;
+  if (ev.attendees?.length) score += ev.attendees.length;
+  if (ev.attachments?.length) score += ev.attachments.length;
+  if (ev.reminders?.overrides?.length) score += 1;
+  return score;
+}
+
 async function findByOrigin(targetApi: any, targetId: string, key: string) {
   const { data } = await targetApi.events.list({
     calendarId: targetId,
@@ -273,6 +341,56 @@ async function syncOneSource(
         // Robust deduplication with multiple checks
         let mirror = await findByOrigin(targetApi, targetId, key);
         if (!mirror) mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
+
+        // Additional check: find by title+time to catch duplicates that lack origin metadata
+        let titleTimeDuplicates: any[] = [];
+        if (!mirror) {
+          titleTimeDuplicates = await findByTitleTime(targetApi, targetId, ev);
+
+          if (titleTimeDuplicates.length > 0) {
+            // Check if any of these duplicates lack the origin property or have different origins
+            const validDuplicates = titleTimeDuplicates.filter(dup => {
+              const dupOrigin = dup.extendedProperties?.private?.origin;
+              return !dupOrigin || dupOrigin !== key;
+            });
+
+            if (validDuplicates.length > 0) {
+              // Choose the newest/most detailed event
+              const currentEvent = { ...ev, ...mirrorBodyFrom(ev, key) };
+              let bestEvent = currentEvent;
+              let eventToUpdate: any = null;
+
+              for (const dup of validDuplicates) {
+                if (isEventNewer(dup, bestEvent)) {
+                  if (bestEvent === currentEvent) {
+                    // The duplicate is newer than our current event, so we should update the duplicate
+                    eventToUpdate = dup;
+                    bestEvent = dup;
+                  }
+                } else {
+                  // Our current event (or a previously found event) is newer, mark duplicate for deletion
+                  if (eventToUpdate !== dup) {
+                    try {
+                      await targetApi.events.delete({
+                        calendarId: targetId,
+                        eventId: dup.id!,
+                        sendUpdates: "none" as any
+                      });
+                      console.log(`  - deleted older duplicate "${dup.summary || '(no title)'}" (${dup.id}) with same title+time`);
+                    } catch (e: any) {
+                      console.warn(`  ! failed to delete duplicate ${dup.id}: ${e?.message}`);
+                    }
+                  }
+                }
+              }
+
+              if (eventToUpdate && eventToUpdate !== currentEvent) {
+                // Update the existing event with newer details
+                mirror = eventToUpdate;
+              }
+            }
+          }
+        }
 
         const body = mirrorBodyFrom(ev, key);
 

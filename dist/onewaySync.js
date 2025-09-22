@@ -137,6 +137,71 @@ function buildOriginKey(srcCanonicalId, ev) {
     const orig = isoOrDate(ev.originalStartTime?.dateTime, ev.originalStartTime?.date);
     return orig ? `${base}:${orig}` : base;
 }
+// Create a normalized key for title + time duplicate detection
+function buildTitleTimeKey(ev) {
+    const title = (ev.summary || "").trim().toLowerCase();
+    const startTime = isoOrDate(ev.start?.dateTime, ev.start?.date);
+    const endTime = isoOrDate(ev.end?.dateTime, ev.end?.date);
+    return `${title}:${startTime}:${endTime}`;
+}
+// Find events by title and time in target calendar
+async function findByTitleTime(targetApi, targetId, ev) {
+    const titleTimeKey = buildTitleTimeKey(ev);
+    const [title] = titleTimeKey.split(':');
+    if (!title || !ev.start)
+        return [];
+    // Search for events with same title in a time window around the event
+    const searchStart = new Date(ev.start?.dateTime || ev.start?.date);
+    const searchEnd = new Date(searchStart);
+    searchEnd.setDate(searchEnd.getDate() + 1); // Search within same day
+    try {
+        const { data } = await targetApi.events.list({
+            calendarId: targetId,
+            timeMin: searchStart.toISOString(),
+            timeMax: searchEnd.toISOString(),
+            q: ev.summary,
+            maxResults: 50,
+            singleEvents: true,
+            showDeleted: false
+        });
+        const items = data.items || [];
+        return items.filter((item) => {
+            const itemKey = buildTitleTimeKey(item);
+            return itemKey === titleTimeKey;
+        });
+    }
+    catch (e) {
+        console.warn("Title/time search failed:", e?.message);
+        return [];
+    }
+}
+// Compare two events to determine which is newer/has more details
+function isEventNewer(eventA, eventB) {
+    const timeA = new Date(eventA.updated || eventA.created || 0).getTime();
+    const timeB = new Date(eventB.updated || eventB.created || 0).getTime();
+    if (timeA !== timeB) {
+        return timeA > timeB;
+    }
+    // If times are equal, prefer event with more details
+    const scoreA = getEventDetailScore(eventA);
+    const scoreB = getEventDetailScore(eventB);
+    return scoreA > scoreB;
+}
+// Score an event based on amount of detail it contains
+function getEventDetailScore(ev) {
+    let score = 0;
+    if (ev.description?.trim())
+        score += 2;
+    if (ev.location?.trim())
+        score += 1;
+    if (ev.attendees?.length)
+        score += ev.attendees.length;
+    if (ev.attachments?.length)
+        score += ev.attachments.length;
+    if (ev.reminders?.overrides?.length)
+        score += 1;
+    return score;
+}
 async function findByOrigin(targetApi, targetId, key) {
     const { data } = await targetApi.events.list({
         calendarId: targetId,
@@ -200,8 +265,7 @@ function mirrorBodyFrom(ev, key) {
         extendedProperties: { private: { [ORIGIN_KEY]: key } }
     };
 }
-async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state) {
-    const sourceId = await resolveCanonicalId(sourceApi, rawSourceId);
+async function syncOneSource(sourceApi, targetApi, sourceId, targetId, state) {
     const baseParams = {
         calendarId: sourceId,
         showDeleted: true,
@@ -239,7 +303,7 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                                 eventId: mirror.id,
                                 sendUpdates: "none"
                             });
-                            console.log(`  - deleted mirror for ${key}`);
+                            console.log(`  - deleted mirror for ${key} | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
                         }
                         catch (e) {
                             console.warn(`  ! delete failed for ${key}: ${e?.message}`);
@@ -251,6 +315,53 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                 let mirror = await findByOrigin(targetApi, targetId, key);
                 if (!mirror)
                     mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
+                // Additional check: find by title+time to catch duplicates that lack origin metadata
+                let titleTimeDuplicates = [];
+                if (!mirror) {
+                    titleTimeDuplicates = await findByTitleTime(targetApi, targetId, ev);
+                    if (titleTimeDuplicates.length > 0) {
+                        // Check if any of these duplicates lack the origin property or have different origins
+                        const validDuplicates = titleTimeDuplicates.filter(dup => {
+                            const dupOrigin = dup.extendedProperties?.private?.origin;
+                            return !dupOrigin || dupOrigin !== key;
+                        });
+                        if (validDuplicates.length > 0) {
+                            // Choose the newest/most detailed event
+                            const currentEvent = { ...ev, ...mirrorBodyFrom(ev, key) };
+                            let bestEvent = currentEvent;
+                            let eventToUpdate = null;
+                            for (const dup of validDuplicates) {
+                                if (isEventNewer(dup, bestEvent)) {
+                                    if (bestEvent === currentEvent) {
+                                        // The duplicate is newer than our current event, so we should update the duplicate
+                                        eventToUpdate = dup;
+                                        bestEvent = dup;
+                                    }
+                                }
+                                else {
+                                    // Our current event (or a previously found event) is newer, mark duplicate for deletion
+                                    if (eventToUpdate !== dup) {
+                                        try {
+                                            await targetApi.events.delete({
+                                                calendarId: targetId,
+                                                eventId: dup.id,
+                                                sendUpdates: "none"
+                                            });
+                                            console.log(`  - deleted older duplicate "${dup.summary || '(no title)'}" (${dup.id}) with same title+time`);
+                                        }
+                                        catch (e) {
+                                            console.warn(`  ! failed to delete duplicate ${dup.id}: ${e?.message}`);
+                                        }
+                                    }
+                                }
+                            }
+                            if (eventToUpdate && eventToUpdate !== currentEvent) {
+                                // Update the existing event with newer details
+                                mirror = eventToUpdate;
+                            }
+                        }
+                    }
+                }
                 const body = mirrorBodyFrom(ev, key);
                 if (!mirror) {
                     // Triple-check before creating to prevent duplicates
@@ -262,7 +373,7 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                                 requestBody: body,
                                 sendUpdates: "none"
                             });
-                            console.log(`  + created ${created.id} for ${key}`);
+                            console.log(`  + created ${created.id} for ${key} | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
                         }
                         catch (insertError) {
                             // Enhanced race condition handling
@@ -280,7 +391,7 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                                         requestBody: body,
                                         sendUpdates: "none"
                                     });
-                                    console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved)`);
+                                    console.log(`  ~ updated ${mirror.id} for ${key} (race condition resolved) | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
                                 }
                                 catch (patchError) {
                                     console.warn(`  ! patch failed after race condition: ${patchError?.message}`);
@@ -305,7 +416,7 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                             requestBody: body,
                             sendUpdates: "none"
                         });
-                        console.log(`  ~ updated ${mirror.id} for ${key} (found during triple-check)`);
+                        console.log(`  ~ updated ${mirror.id} for ${key} (found during triple-check) | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
                     }
                 }
                 else {
@@ -315,7 +426,7 @@ async function syncOneSource(sourceApi, targetApi, rawSourceId, targetId, state)
                         requestBody: body,
                         sendUpdates: "none"
                     });
-                    console.log(`  ~ updated ${mirror.id} for ${key}`);
+                    console.log(`  ~ updated ${mirror.id} for ${key} | "${ev.summary || '(no title)'}" on ${ev.start?.dateTime || ev.start?.date || 'unknown date'}`);
                 }
             }
             pageToken = data.nextPageToken || undefined;
@@ -364,11 +475,20 @@ export async function main() {
                 delete state.syncTokens[id];
             }
         }
+        // Resolve all source IDs to canonical form and deduplicate
+        const canonicalSourceIds = new Set();
+        const sourceIdMapping = {};
+        for (const rawSrcId of SOURCE_IDS) {
+            const canonicalId = await resolveCanonicalId(src, rawSrcId);
+            canonicalSourceIds.add(canonicalId);
+            sourceIdMapping[rawSrcId] = canonicalId;
+        }
         console.log("---- Sync run", new Date().toISOString(), "----");
-        console.log("Sources:", SOURCE_IDS.join(", "));
+        console.log("Sources:", SOURCE_IDS.map(id => `${id} -> ${sourceIdMapping[id]}`).join(", "));
+        console.log("Canonical sources (deduplicated):", Array.from(canonicalSourceIds).join(", "));
         console.log("Target :", TARGET_ID);
-        for (const srcId of SOURCE_IDS) {
-            await syncOneSource(src, tgt, srcId, TARGET_ID, state);
+        for (const canonicalSrcId of canonicalSourceIds) {
+            await syncOneSource(src, tgt, canonicalSrcId, TARGET_ID, state);
         }
         console.log("Done.");
     }
