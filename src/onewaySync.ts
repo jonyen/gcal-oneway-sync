@@ -339,9 +339,10 @@ async function syncOneSource(
         }
 
         // Robust deduplication with multiple checks
-        let mirror = await findByOrigin(targetApi, targetId, key);
-        if (!mirror) mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
+        // let mirror = await findByOrigin(targetApi, targetId, key);
+        // if (!mirror) mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
 
+        let mirror = false;
         // Additional check: find by title+time to catch duplicates that lack origin metadata
         let titleTimeDuplicates: any[] = [];
         if (!mirror) {
