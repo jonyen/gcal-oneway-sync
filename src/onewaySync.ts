@@ -342,7 +342,7 @@ async function syncOneSource(
         // let mirror = await findByOrigin(targetApi, targetId, key);
         // if (!mirror) mirror = await findByICalAndBackfill(targetApi, targetId, ev, key);
 
-        let mirror = false;
+        let mirror: any = null;
         // Additional check: find by title+time to catch duplicates that lack origin metadata
         let titleTimeDuplicates: any[] = [];
         if (!mirror) {
