@@ -1,7 +1,31 @@
 import http from 'http';
+import { spawn } from 'child_process';
 import { main } from './onewaySync.js';
 
 const PORT = process.env.PORT || 8080;
+
+// Helper function to run npm run dedupe
+function runDedupe(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log('Running dedupe after sync completion...');
+    const child = spawn('npm', ['run', 'dedupe'], { stdio: 'inherit' });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        console.log('Dedupe completed successfully');
+        resolve();
+      } else {
+        console.error(`Dedupe failed with exit code ${code}`);
+        reject(new Error(`Dedupe process exited with code ${code}`));
+      }
+    });
+
+    child.on('error', (error) => {
+      console.error('Failed to start dedupe process:', error);
+      reject(error);
+    });
+  });
+}
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -16,8 +40,17 @@ const server = http.createServer(async (req, res) => {
     try {
       console.log('Sync triggered via HTTP');
       await main();
-      res.writeHead(200);
-      res.end(JSON.stringify({ status: 'success', message: 'Calendar sync completed', timestamp: new Date().toISOString() }));
+
+      // Run dedupe after successful sync
+      try {
+        await runDedupe();
+        res.writeHead(200);
+        res.end(JSON.stringify({ status: 'success', message: 'Calendar sync and dedupe completed', timestamp: new Date().toISOString() }));
+      } catch (dedupeError) {
+        console.error('Dedupe failed:', dedupeError);
+        res.writeHead(200);
+        res.end(JSON.stringify({ status: 'partial_success', message: 'Calendar sync completed but dedupe failed', syncSuccess: true, dedupeSuccess: false, error: dedupeError instanceof Error ? dedupeError.message : 'Unknown dedupe error', timestamp: new Date().toISOString() }));
+      }
     } catch (error) {
       console.error('Sync failed:', error);
       res.writeHead(500);
