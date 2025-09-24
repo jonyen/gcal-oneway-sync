@@ -4,11 +4,11 @@ import { main } from './onewaySync.js';
 
 const PORT = process.env.PORT || 8080;
 
-// Helper function to run npm run dedupe
+// Helper function to run dedupe script directly
 function runDedupe(): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log('Running dedupe after sync completion...');
-    const child = spawn('npm', ['run', 'dedupe'], { stdio: 'inherit' });
+    const child = spawn('node', ['dist/dedupeTarget.js'], { stdio: 'inherit' });
 
     child.on('close', (code) => {
       if (code === 0) {
