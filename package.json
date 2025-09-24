@@ -10,7 +10,7 @@
     "server": "node dist/server.js",
     "build": "tsc -p .",
     "cleanup": "tsx src/cleanupTarget.ts",
-    "dedupe": "tsx src/dedupeTarget.ts"
+    "dedupe": "node dist/dedupeTarget.js"
   },
   "dependencies": {
     "dayjs": "^1.11.11",
