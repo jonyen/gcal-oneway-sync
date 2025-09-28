@@ -517,9 +517,9 @@ export async function main() {
     }
 
     console.log("---- Sync run", new Date().toISOString(), "----");
-    console.log("Sources:", SOURCE_IDS.map(id => `${id} -> ${sourceIdMapping[id]}`).join(", "));
-    console.log("Canonical sources (deduplicated):", Array.from(canonicalSourceIds).join(", "));
-    console.log("Target :", TARGET_ID);
+    console.log("Sources: ", SOURCE_IDS.map(id => `${id} -> ${sourceIdMapping[id]}`).join(", "));
+    console.log("Canonical sources (deduplicated): ", Array.from(canonicalSourceIds).join(", "));
+    console.log("Target: ", TARGET_ID);
 
     for (const canonicalSrcId of canonicalSourceIds) {
       await syncOneSource(src, tgt, canonicalSrcId, TARGET_ID, state);
