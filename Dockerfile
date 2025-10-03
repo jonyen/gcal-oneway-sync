@@ -1,4 +1,5 @@
 # Use Node.js 20 LTS version (compatible with latest npm)
+# This image supports ARM64 architecture for Raspberry Pi
 FROM node:20-alpine
 
 # Set working directory
@@ -19,7 +20,10 @@ RUN npm run build
 # Remove dev dependencies after build
 RUN npm prune --omit=dev
 
-# Expose port (Cloud Run will set PORT env var)
+# Create volume mount point for persistent state
+VOLUME ["/app/data"]
+
+# Expose port
 EXPOSE 8080
 
 # Command to run the HTTP server

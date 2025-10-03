@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  gcal-sync:
+    build: .
+    container_name: gcal-oneway-sync
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - SOURCE_TOKENS_JSON=${SOURCE_TOKENS_JSON}
+      - TARGET_TOKENS_JSON=${TARGET_TOKENS_JSON}
+      - SOURCE_CALENDAR_IDS=${SOURCE_CALENDAR_IDS}
+      - TARGET_CALENDAR_ID=${TARGET_CALENDAR_ID}
+      - FULL_WINDOW_MONTHS=${FULL_WINDOW_MONTHS:-12}
+      - STATE_FILE=/app/data/state.json
+    volumes:
+      # Mount a local directory for persistent state
+      - ./data:/app/data
+      # Optional: Mount token files if you prefer file-based auth
+      # - ./source-tokens.json:/app/source-tokens.json:ro
+      # - ./target-tokens.json:/app/target-tokens.json:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
