@@ -304,18 +304,26 @@ def find_by_title_time(target_api, target_id, event):
 
 def mirror_body_from(event, key):
     """Create mirror event body."""
-    return {
+    body = {
         'summary': event.get('summary', '(busy)'),
-        'description': event.get('description'),
-        'location': event.get('location'),
         'start': event.get('start'),
         'end': event.get('end'),
-        'visibility': event.get('visibility'),
-        'recurrence': event.get('recurrence'),
         'extendedProperties': {
             'private': {ORIGIN_KEY: key}
         }
     }
+
+    # Only include optional fields if they have values
+    if event.get('description'):
+        body['description'] = event['description']
+    if event.get('location'):
+        body['location'] = event['location']
+    if event.get('visibility'):
+        body['visibility'] = event['visibility']
+    if event.get('recurrence'):
+        body['recurrence'] = event['recurrence']
+
+    return body
 
 
 def resolve_canonical_id(source_api, cal_id):

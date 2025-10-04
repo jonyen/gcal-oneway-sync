@@ -53,11 +53,29 @@ Sync events from multiple source Google Calendars to a single target calendar wi
 
 ## Alternative Deployment Options
 
-### Option 1: Raspberry Pi Deployment (Docker)
+### Option 1: Raspberry Pi Deployment
+
+#### Option 1A: Python Version (All Raspberry Pi Models)
+
+**Best for: Raspberry Pi 1, Zero, or any older model (ARMv6)**
+
+The Python version works on ALL Raspberry Pi models, including older ones that can't run modern Node.js.
+
+See [python/README.md](python/README.md) for full instructions.
+
+**Quick Start:**
+```bash
+cd ~/gcal-oneway-sync/python
+./setup-pi.sh
+# Follow the setup instructions
+./setup-cron-py.sh
+```
+
+#### Option 1B: Node.js/Docker Version (Pi 3B+ or newer)
 
 #### Prerequisites
 
-- Raspberry Pi (3B+ or newer recommended)
+- Raspberry Pi (3B+ or newer required)
 - Docker and docker-compose installed
 - Internet connection
 

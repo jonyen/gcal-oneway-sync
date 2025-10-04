@@ -18,8 +18,8 @@ REDIRECT_URI = os.getenv('OAUTH_REDIRECT_URI', 'http://localhost:3333/oauth/call
 
 SCOPES = [
     'https://www.googleapis.com/auth/calendar',
-    'openid',
-    'email'
+    'https://www.googleapis.com/auth/userinfo.email',
+    'openid'
 ]
 
 class OAuthHandler(BaseHTTPRequestHandler):
